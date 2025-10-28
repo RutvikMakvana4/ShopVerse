@@ -6,9 +6,11 @@ import {
   validateRegistrationData,
   verifyOtp,
 } from "../utils/auth.helper";
-import { ValidationError } from "@packages/error-handler";
+import { AuthError, ValidationError } from "@packages/error-handler";
 import prisma from "@packages/libs/prisma";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { setCookie } from "../utils/cookies/setCookie";
 
 // Register a new user
 export const userRegistration = async (
@@ -75,6 +77,62 @@ export const verifyUser = async (
     res.status(201).json({
       success: true,
       message: "User registered successfully!",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const loginUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return next(new ValidationError("Email and password are required."));
+    }
+
+    const user = await prisma.users.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      return next(new AuthError("User does not exist."));
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password!);
+
+    if (!isMatch) {
+      return next(new ValidationError("Invalid email or password."));
+    }
+
+    // generate access and refresh tokens
+    const accessToken = jwt.sign(
+      { id: user.id, role: "user" },
+      process.env.ACCESS_TOKEN_SECRET!,
+      { expiresIn: "15m" }
+    );
+    const refreshToken = jwt.sign(
+      { id: user.id, role: "user" },
+      process.env.REFRESH_TOKEN_SECRET!,
+      { expiresIn: "7d" }
+    );
+
+    // store the access and refresh tokens in an http-only cookie
+    setCookie(res, "access_token", accessToken);
+    setCookie(res, "refresh_token", refreshToken);
+
+    res.status(200).json({
+      success: true,
+      message: "User logged in successfully!",
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      },
     });
   } catch (error) {
     next(error);
